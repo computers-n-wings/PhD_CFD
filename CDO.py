@@ -7,6 +7,7 @@ import collections
 import pandas as pd
 import csv
 from pyDOE import lhs
+import matplotlib.pyplot as plt
 
 # Class for computational design optimisation study of a centrifugal pump
 class CDO:
@@ -25,15 +26,65 @@ class CDO:
 #       The dictionary of geometry parameters that will be fixed throughout the
 #       study e.g. For pump impeller, inlet and impeller radii will often be 
 #       fixed.
-        self.Fixed = Fixed
+        if Fixed is not None:
+            self.Fixed = Fixed
+        else:
+            self.Fixed = {'R1': 50.988300, 'R2': 97.622400, 'Rcut': 12.065000, \
+         'Hin': 100.0, 'Rout': 120.0, 'HBz3': 0.0, 'HBz4': 0.0, 'SBz4': 22.569800,\
+         'SBr2': 50.988300,'bladeNo': 6} 
 #       The dictionary of geometry parameters for a nominal geometry. The value
 #       of these parameters will change from geometry to geometry, however this
 #       dictionary will be left untouched.
-        self.Nominal = Nominal
+        if Nominal is not None:
+            self.Nominal = Nominal
+        else:
+            self.Nominal = collections.OrderedDict()
+            self.Nominal['Hlenfrac'] = 0.461192
+            self.Nominal['Slenfrac'] = 0.359983
+            self.Nominal['SBz1'] = 40.861900
+            self.Nominal['SBz2'] = 32.602400
+            self.Nominal['SBz3'] = 26.490900
+            self.Nominal['SBr3'] = 56.544300
+            self.Nominal['HBz1'] = 22.472400
+            self.Nominal['HBz2'] = 8.225470
+            self.Nominal['HBr2'] = 20.290500
+            self.Nominal['HBr3'] = 34.537400
+            self.Nominal['LEz2'] = 0.0
+            self.Nominal['LEr2'] = 0.0
+            self.Nominal['LEz3'] = 0.0
+            self.Nominal['LEr3'] = 0.0
+            self.Nominal['Beta11'] = 34.831
+            self.Nominal['Beta12'] = 50.357
+            self.Nominal['Beta13'] = 45.441
+            self.Nominal['Beta14'] = 22.500
+            self.Nominal['Beta51'] = 21.018
+            self.Nominal['Beta52'] = 22.500
+            self.Nominal['Beta53'] = 22.994
+            self.Nominal['Beta54'] = 22.500
+            self.Nominal['Thk11'] = 5.857
+            self.Nominal['Thk12'] = 5.857
+            self.Nominal['Thk13'] = 5.857
+            self.Nominal['Thk14'] = 5.857
+            self.Nominal['Thk51'] = 5.857
+            self.Nominal['Thk52'] = 5.857
+            self.Nominal['Thk53'] = 5.857
+            self.Nominal['Thk54'] = 5.857
 #       The dictionary of meshing parameters for the TSE file used in TurboGrid
-        self.MeshParam = MeshParam
+        if MeshParam is not None:
+            self.MeshParam = MeshParam
+        else:
+            self.MeshParam = {'bladeNo': self.Fixed['bladeNo'], 'PeriodicBias': 0.6, 
+             'InHubLoc': 0.1, 'InShroudLoc': 0.2, 'OutletLoc': 0.5, \
+             'FiveVertFac': 1.0, 'GlobSizeFac': 1.0, 'BLFacBase': 3.0, \
+             'BLFacRate': 0.0, 'MaxExpRate': 1.3, 'InGrow': 1.05, \
+             'OutGrow': 1.03, 'SpanFac': 1.08, 'TESplitFac': 1.0}
 #       The dictionary of CFD parameters for the CCL file used for CFX Pre
-        self.CFDParam = CFDParam
+        if CFDParam is not None:
+            self.CFDParam = CFDParam
+        else:
+            self.CFDParam = {'AngularVel': 261.8, 'FlowRateKGPerS': 30.0, \
+            'PressureBC': 600000,  'MaxIter': 800, 'noPartitions': 8, \
+            'ConvergenceRes': 0.00001}
 
 #   Creates a list of 50 spline points from a list of Bezier control points 
 #   defining a 2D line using the library "bezier"
@@ -164,8 +215,21 @@ class CDO:
     def CleanData(FileName,scale=[0,1]):
         df = pd.read_csv(FileName)
         df = df.dropna(thresh=len(df.columns))
+#        df[df.columns[:30]] = scale[0]+(scale[1]-scale[0])*(df[df.columns[:30]]-df[df.columns[:30]].min())/(df[df.columns[:30]].max()-df[df.columns[:30]].min())
         df=scale[0]+(scale[1]-scale[0])*(df-df.min())/(df.max()-df.min())
         return df
+    
+    @staticmethod
+    def CSVDataFrame2Dict(FileName):
+        Data = pd.read_csv(FileName)
+        return Data.to_dict('records')[0]
+    
+    def CreateWorkDir(self,FileName):
+        self.WorkDir = self.Dir+'/'+FileName
+        if os.path.exists(self.WorkDir):
+            shutil.rmtree(self.WorkDir)
+        os.mkdir(self.WorkDir)
+        return None
     
 #   Creates interactive parallel coordinates given a relational data table in  
 #   CSV form using the library "plotly"
@@ -182,6 +246,8 @@ class CDO:
 #       Read in the data from the CSV file, drop rows with NaN values in any 
 #       entry, and normalise the entries
         df = self.CleanData(FileName)
+#        df = pd.read_csv(FileName)
+#        df = df.dropna(thresh=len(df.columns))
 #       Initialise the data and loop through the columns in the dataframe 
 #       creating a dictionary containing necessary info for plotly parallel 
 #       coordinates
@@ -225,6 +291,7 @@ class CDO:
 #       edge points
         HPoints,LE1 = self.Bezier2SplinePoints(HZB,HRB,Param['Hlenfrac'])
         SPoints,LE4 = self.Bezier2SplinePoints(SZB,SRB,Param['Slenfrac'])
+        delLE = 0.1*np.linalg.norm(LE4-LE1)
 #       Add all of the spline points for both curves to the dictionary
         for num,point in enumerate(HPoints):
             Dict['H'+str(num+1)+'z'] = point[0,0]
@@ -232,11 +299,18 @@ class CDO:
         for num,point in enumerate(SPoints):
             Dict['S'+str(num+1)+'z'] = point[0,0]
             Dict['S'+str(num+1)+'r'] = point[1,0]
+#       Calculate points for LE2 and LE3
+        LE2 = LE1 + (LE4-LE1)/3.
+        LE3 = LE1 + 2.*(LE4-LE1)/3.
 #       Add the leading edge points to the dictionary
         Dict['LEz1'] = LE1[0,0]
         Dict['LEr1'] = LE1[1,0]
+        Dict['LEz2'] = LE2[0,0] + Param['LEz2']*delLE
+        Dict['LEr2'] = LE2[1,0] + Param['LEr2']*delLE
+        Dict['LEz3'] = LE3[0,0] + Param['LEz3']*delLE
+        Dict['LEr3'] = LE3[1,0] + Param['LEr3']*delLE
         Dict['LEz4'] = LE4[0,0]
-        Dict['LEr4'] = LE4[1,0]        
+        Dict['LEr4'] = LE4[1,0] 
 #       Modify the template BGI file with dictionary values
         self.UpdateFileFromDict(FileIn,FileOut,Dict)
         return None
@@ -363,21 +437,13 @@ class CDO:
 #               perturbation values for each value in self.Nominal dictionary
 #   Outputs:
 #   Param:      Dictionary containing all perturbed parameter values 
-    def PerturbParam(self,Perturb,MaxPerturb=None):
-#       If MaxPerturb not given, then calculate the maximum allowable 
-#       perturbation to be 10% of the given value
-        if MaxPerturb == None:
-            MaxPerturb = self.Nominal.copy()
-            for key,val in MaxPerturb.items():
-                MaxPerturb[key] = 0.1*val
+    def PerturbParam(self,Perturb,MaxPerturb):
 #       Initialise Param dictionary and update values by perturbing the nominal
 #       value such that the new value lies within a circle centred around the 
 #       nominal with radius equal to MaxPerturb
         Param = collections.OrderedDict()
         for key,val in self.Nominal.items():
-            Param[key] = (-1.+2.*Perturb[key])*MaxPerturb[key]+val
-#        for num,val in enumerate(self.Nominal):
-#            Param[val] = (-1.+2.*Perturb[num])*MaxPerturb[val]+self.Nominal[val]
+            Param[key] = Perturb[key]*MaxPerturb[key]+val
         return Param
 
 #   Create and evaluate the geometry defined by the dictionary Param using 
@@ -389,9 +455,10 @@ class CDO:
 #   Param:  Dictionary containing all the parameter values allowed to vary in
 #           subsequent runs
 #   num:    An integer which is used to create the new working directory 
-    def Evaluate(self,Param,Delete=True):
+    def Evaluate(self,Param):
 #       Define tags for quantities of interest
-        QOI = ['nu','H']
+        QOI = ['H','nu']
+        Results = collections.OrderedDict()
 #       Copy all of the template files from starting directory to the working
 #       directory
         for FileName in os.listdir(self.Dir):
@@ -416,8 +483,8 @@ class CDO:
                              self.WorkDir+'\ImpellerSetup.pre'])
         except subprocess.CalledProcessError:
             for key in QOI:
-                Param[key]=float('nan')
-            return Param
+                Results[key]=float('nan')
+            return Results
 #       Write RPL file to working directory and call ICEM CFD to check mesh
 #       quality
         self.WriteRPL()
@@ -426,7 +493,7 @@ class CDO:
 #       If mesh does not pass mesh quality check, return nan values
         if not self.CheckMesh():
             for key in QOI:
-                Param[key]=float('nan')
+                Results[key]=float('nan')
 #       If mesh passes mesh quality check, continue evaluation procedure
         else:
 #           Call CFX solver in working directory using the number of partitions
@@ -447,8 +514,8 @@ class CDO:
                                          '-res', self.WorkDir+'\ImpellerCFD_001.res'])
             except subprocess.CalledProcessError:
                 for key in QOI:
-                    Param[key]=float('nan')
-                return Param
+                    Results[key]=float('nan')
+                return Results
 #           Save the monitor results to a CSV file to extract the necessary
 #           data for inspection
             Filename = self.WorkDir+'\Monitor.csv'
@@ -461,15 +528,16 @@ class CDO:
             for item in QOI:
                 Columns.append('USER POINT,'+item)
 #           Extract the results from the CSV file
-            Results = self.ExtractResultsFromCSV(Filename,Columns)
+            Res = self.ExtractResultsFromCSV(Filename,Columns)
 #           Update the Param dictionary with the extracted results from the most
 #           recent timestep
-            for key,val in Results.items():
+            for key,val in Res.items():
                 ID = key.split(',')[-1]
-                Param[ID]=val[-1]
-            if Delete:
-                shutil.rmtree(self.WorkDir)
-        return Param
+                if len(val)<self.CFDParam['MaxIter']:
+                    Results[ID]=val[-1]
+                else:
+                    Results[ID]=float('nan')
+        return Results
     
 #   Runs a DOE study by taking a LHS of the design variables over a specified
 #   number of sample and iteratively perturbing parameters around these values
@@ -479,29 +547,51 @@ class CDO:
 #   noSamples:  number of samples to run DOE study for
 #   NOTE: This value must be an integer greater than 1
     def DOE(self,noSamples,lhd=None):
-        if lhd == None:
-#           Find the matrix of Latin Hypercube samples using the 'maximin' criterion
-            lhd = lhs(len(self.Nominal), samples=noSamples, criterion='maximin')
-        Samples = []
-        for i in range(len(lhd)):
-            Sample = collections.OrderedDict()
-            for num,val in enumerate(self.Nominal):
-                Sample[val] = lhd[i,num]
-            Samples.append(Sample)
-        self.DictList2CSV(self.Dir+'\Sample.csv',Samples)
+        if lhd is not None:
+            Samples = []
+            for i in range(len(lhd)):
+                Sample = collections.OrderedDict()
+                for num,val in enumerate(self.Nominal):
+                    Sample[val] = lhd[i,num]
+                Samples.append(Sample)
+            MaxPerturb = self.CSVDataFrame2Dict(self.Dir+'/MaxPerturb.csv')
+        else:
+#           Latin Hypercube samples
+            lhd = -1.+2.*lhs(len(self.Nominal), samples=noSamples)
+            Samples = []
+            for i in range(len(lhd)):
+                Sample = collections.OrderedDict()
+                for num,val in enumerate(self.Nominal):
+                    Sample[val] = lhd[i,num]
+                Samples.append(Sample)
+#           Define maximum perturbations for each input
+            MaxPerturb = self.Nominal.copy()
+            for key,val in MaxPerturb.items():
+                MaxPerturb[key] = 0.1*val
+            MaxPerturb['LEz2'] = 1.0
+            MaxPerturb['LEr2'] = 1.0
+            MaxPerturb['LEz3'] = 1.0
+            MaxPerturb['LEr3'] = 1.0
+#           Write max perturbation values to file
+            self.DictList2CSV(self.Dir+'\MaxPerturb.csv',[MaxPerturb])
+#           Write nominal geometry values to file
+            self.DictList2CSV(self.Dir+'\Nominal.csv',[self.Nominal])
+#           Write all the LHS points to a file
+            self.DictList2CSV(self.Dir+'\Sample.csv',Samples)
 #       Loop over the samples, perturbing the nominal values, and evaluating
 #       the geometries that are returned
         for i in range(len(lhd)):
-            Param = self.PerturbParam(Samples[i])
+            Param = self.PerturbParam(Samples[i],MaxPerturb)
 #           Define and create new working directory if it does not exist already.
 #           If it exists already, delete it and make a new directory
-            self.WorkDir = self.Dir+'\Work'+str(i)
-            if os.path.exists(self.WorkDir):
-                shutil.rmtree(self.WorkDir)
-            os.mkdir(self.WorkDir)
+            self.CreateWorkDir('Work'+str(i))
             Results = self.Evaluate(Param)
+            Output = Samples[i].copy()
+            for key,value in Results.items():
+                Output[key] = value
+            shutil.rmtree(self.WorkDir)
 #           Print the results to a CSV file
-            self.OrderedDict2CSV(self.Dir+'\Results.csv',Results)
+            self.OrderedDict2CSV(self.Dir+'\Results.csv',Output)
         return None
     
 #   Performs a grid independence study of the nominal geometry by updating the
@@ -523,7 +613,7 @@ class CDO:
 #            if os.path.exists(self.WorkDir):
 #                shutil.rmtree(self.WorkDir)
 #            os.mkdir(self.WorkDir) 
-#            Param = self.Evaluate(Param,False)
+#            Param = self.Evaluate(Param)
 ##           Update the Results dictionary with the CFD results
 #            Results['GlobSizeFac'] = val
 #            Results['NoElements'] = self.ExtractMeshSize()
@@ -535,69 +625,42 @@ class CDO:
         Results = self.ExtractResultsFromCSV(self.Dir+'\GridIndependence.csv',['NoElements','H','nu'])
         plt.scatter(Results['NoElements']/1000,Results['nu'])
         plt.show()
-        return None                
+        return None 
+
+    def EvaluateSample(self,Array,num):
+        self.CreateWorkDir('New'+str(num))
+        Sample = collections.OrderedDict()
+        for num,val in enumerate(self.Nominal):
+            Sample[val] = Array[num]
+        MaxPerturb = self.CSVDataFrame2Dict(self.Dir+'/MaxPerturb.csv')
+        Param = self.PerturbParam(Sample,MaxPerturb)
+        Results = self.Evaluate(Param)
+        Output = Sample.copy()
+        for key,value in Results.items():
+            Output[key] = value  
+        self.OrderedDict2CSV(self.Dir+'\AddResults.csv',Output)
+#        print Output
+        return None
             
 if __name__ == '__main__':
-    Fixed = {'R1': 50.988300, 'R2': 97.622400, 'Rcut': 12.065000, \
-         'Hin': 100.0, 'Rout': 120.0, 'HBz3': 0.0, 'HBz4': 0.0, \
-         'SBz4': 22.569800, 'SBr2': 50.988300,'bladeNo': 6}    
-    
-    Nom = collections.OrderedDict()
-    Nom['Hlenfrac'] = 0.461192
-    Nom['Slenfrac'] = 0.359983
-    Nom['SBz1'] = 40.861900
-    Nom['SBz2'] = 32.602400
-    Nom['SBz3'] = 26.490900
-    Nom['SBr3'] = 56.544300
-    Nom['HBz1'] = 22.472400
-    Nom['HBz2'] = 8.225470
-    Nom['HBr2'] = 20.290500
-    Nom['HBr3'] = 34.537400
-    Nom['LEz2'] = 18.146752
-    Nom['LEr2'] = 35.928998
-    Nom['LEz3'] = 28.206074
-    Nom['LEr3'] = 43.574299
-    Nom['Beta11'] = 34.831
-    Nom['Beta12'] = 50.357
-    Nom['Beta13'] = 45.441
-    Nom['Beta14'] = 22.500
-    Nom['Beta51'] = 21.018
-    Nom['Beta52'] = 22.500
-    Nom['Beta53'] = 22.994
-    Nom['Beta54'] = 22.500
-    Nom['Thk11'] = 5.857
-    Nom['Thk12'] = 5.857
-    Nom['Thk13'] = 5.857
-    Nom['Thk14'] = 5.857
-    Nom['Thk51'] = 5.857
-    Nom['Thk52'] = 5.857
-    Nom['Thk53'] = 5.857
-    Nom['Thk54'] = 5.857
-    
-    MeshParam = {'bladeNo': Fixed['bladeNo'], 'PeriodicBias': 0.6, 
-                 'InHubLoc': 0.1, 'InShroudLoc': 0.2, 'OutletLoc': 0.5, \
-                 'FiveVertFac': 1.0, 'GlobSizeFac': 1.0, 'BLFacBase': 3.0, \
-                 'BLFacRate': 0.0, 'MaxExpRate': 1.3, 'InGrow': 1.05, \
-                 'OutGrow': 1.03, 'SpanFac': 1.08, 'TESplitFac': 1.0}
-    
-    CFDParam = {'AngularVel': 261.8, 'FlowRateKGPerS': 30.0, \
-                'PressureBC': 600000,  'MaxIter': 800, 'noPartitions': 8, \
-                'ConvergenceRes': 0.00001}
-    
-    ins = CDO(Fixed,Nom,MeshParam,CFDParam)
-    
+    ins = CDO()
+#    ins.EvaluateSample(x)
 ############################### Grid Study ##################################
-    ins.GridIndependenceStudy()
+#    ins.GridIndependenceStudy()
 #############################################################################
     
 ########################## Parallel Coordinates #############################  
-#    FileName = ins.Dir+'\Results1.csv'
+#    FileName = 'Results.csv'
 #    ins.ParallelCoord(FileName)
 #############################################################################
     
 ################################## DOE ######################################     
-#    N = 600
+    N = 900
 #    ins.DOE(N)
+    lhd = pd.read_csv(ins.Dir+'/Sample.csv').values
+    lhd = lhd[423:]
+    ins.DOE(N,lhd=lhd)
+
 #############################################################################
     
     
