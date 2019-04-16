@@ -8,11 +8,16 @@ import pandas as pd
 import csv
 from pyDOE import lhs
 import matplotlib.pyplot as plt
+import math
+
+import sys
+sys.path.append('C:\Users\james\Documents\PolyOpt')
+from DRBO import DRBO
 
 # Class for computational design optimisation study of a centrifugal pump
 class CDO:
 #   Initialise some important class objects
-    def __init__(self,Fixed=None,Nominal=None,MeshParam=None,CFDParam=None):
+    def __init__(self,Fixed=None,Nominal=None,MinParam=None,MaxParam=None,MeshParam=None,CFDParam=None):
 #       The directory in which the study will be performed in
 #       NOTE: This directory must contain template files: TempCheckMesh.rpl,
 #       TempImpellerCFD.ccl, TempImpellerGeom.bgi, TempImpellerMesh.tse, and
@@ -69,6 +74,29 @@ class CDO:
             self.Nominal['Thk52'] = 5.857
             self.Nominal['Thk53'] = 5.857
             self.Nominal['Thk54'] = 5.857
+            
+        if MinParam is not None:
+            self.MinParam = MinParam
+        else:
+            self.MinParam = self.Nominal.copy()
+            for key,val in self.MinParam.items():
+                self.MinParam[key] -= 0.15*val
+            self.MinParam['LEz2'] -= 1.0
+            self.MinParam['LEr2'] -= 1.0
+            self.MinParam['LEz3'] -= 1.0
+            self.MinParam['LEr3'] -= 1.0
+            
+        if MaxParam is not None:
+            self.MaxParam = MaxParam
+        else:
+            self.MaxParam = self.Nominal.copy()
+            for key,val in self.MaxParam.items():
+                self.MaxParam[key] += 0.15*val
+            self.MaxParam['LEz2'] += 1.0
+            self.MaxParam['LEr2'] += 1.0
+            self.MaxParam['LEz3'] += 1.0
+            self.MaxParam['LEr3'] += 1.0
+            
 #       The dictionary of meshing parameters for the TSE file used in TurboGrid
         if MeshParam is not None:
             self.MeshParam = MeshParam
@@ -238,14 +266,15 @@ class CDO:
 #   E.g. username = james.gross189 api_key = ksQEl0SV0y3qmIZXfpJ1
 #   Inputs:
 #   FileName:   the location of the relational data table in CSV form
-    def ParallelCoord(self,FileName):
+    @staticmethod
+    def ParallelCoord(df):
 #       Import plotly library (set credentials if necessary)
 #        plotly.tools.set_credentials_file(username=ID, api_key=key)
         import plotly.plotly as py
         import plotly.graph_objs as go
 #       Read in the data from the CSV file, drop rows with NaN values in any 
 #       entry, and normalise the entries
-        df = self.CleanData(FileName)
+#        df = self.CleanData(FileName)
 #        df = pd.read_csv(FileName)
 #        df = df.dropna(thresh=len(df.columns))
 #       Initialise the data and loop through the columns in the dataframe 
@@ -253,7 +282,7 @@ class CDO:
 #       coordinates
         Data = []
         for column in df:
-            Data.append(dict(range=[0,1],label=column, \
+            Data.append(dict(range=[-1,1],label=column, \
                              values = df[column])) 
         data = [go.Parcoords(line = dict(color = '#25fc25'),dimensions = list(Data))]
 #       Plot the coordinates and open up a webpage to view the interactive
@@ -437,13 +466,15 @@ class CDO:
 #               perturbation values for each value in self.Nominal dictionary
 #   Outputs:
 #   Param:      Dictionary containing all perturbed parameter values 
-    def PerturbParam(self,Perturb,MaxPerturb):
+    def PerturbParam(self,Sample):
 #       Initialise Param dictionary and update values by perturbing the nominal
 #       value such that the new value lies within a circle centred around the 
 #       nominal with radius equal to MaxPerturb
         Param = collections.OrderedDict()
         for key,val in self.Nominal.items():
-            Param[key] = Perturb[key]*MaxPerturb[key]+val
+            lb = self.MinParam[key]
+            ub = self.MaxParam[key]
+            Param[key] = 0.5*(lb+ub) + 0.5*(ub - lb) * Sample[key]
         return Param
 
 #   Create and evaluate the geometry defined by the dictionary Param using 
@@ -554,7 +585,6 @@ class CDO:
                 for num,val in enumerate(self.Nominal):
                     Sample[val] = lhd[i,num]
                 Samples.append(Sample)
-            MaxPerturb = self.CSVDataFrame2Dict(self.Dir+'/MaxPerturb.csv')
         else:
 #           Latin Hypercube samples
             lhd = -1.+2.*lhs(len(self.Nominal), samples=noSamples)
@@ -565,23 +595,17 @@ class CDO:
                     Sample[val] = lhd[i,num]
                 Samples.append(Sample)
 #           Define maximum perturbations for each input
-            MaxPerturb = self.Nominal.copy()
-            for key,val in MaxPerturb.items():
-                MaxPerturb[key] = 0.1*val
-            MaxPerturb['LEz2'] = 1.0
-            MaxPerturb['LEr2'] = 1.0
-            MaxPerturb['LEz3'] = 1.0
-            MaxPerturb['LEr3'] = 1.0
-#           Write max perturbation values to file
-            self.DictList2CSV(self.Dir+'\MaxPerturb.csv',[MaxPerturb])
+#           Write max and min parameter values to file
+            self.DictList2CSV(self.Dir+'\MinParam.csv',[self.MinParam])
+            self.DictList2CSV(self.Dir+'\MaxParam.csv',[self.MaxParam])
 #           Write nominal geometry values to file
-            self.DictList2CSV(self.Dir+'\Nominal.csv',[self.Nominal])
+#            self.DictList2CSV(self.Dir+'\Nominal.csv',[self.Nominal])
 #           Write all the LHS points to a file
             self.DictList2CSV(self.Dir+'\Sample.csv',Samples)
 #       Loop over the samples, perturbing the nominal values, and evaluating
 #       the geometries that are returned
         for i in range(len(lhd)):
-            Param = self.PerturbParam(Samples[i],MaxPerturb)
+            Param = self.PerturbParam(Samples[i])
 #           Define and create new working directory if it does not exist already.
 #           If it exists already, delete it and make a new directory
             self.CreateWorkDir('Work'+str(i))
@@ -628,46 +652,30 @@ class CDO:
         return None 
 
     def EvaluateSample(self,Array,num):
-        self.CreateWorkDir('New'+str(num))
+        self.CreateWorkDir('Work'+str(num))
         Sample = collections.OrderedDict()
         for num,val in enumerate(self.Nominal):
             Sample[val] = Array[num]
-        MaxPerturb = self.CSVDataFrame2Dict(self.Dir+'/MaxPerturb.csv')
-        Param = self.PerturbParam(Sample,MaxPerturb)
+        Param = self.PerturbParam(Sample)
         Results = self.Evaluate(Param)
         Output = Sample.copy()
         for key,value in Results.items():
             Output[key] = value  
-        self.OrderedDict2CSV(self.Dir+'\AddResults.csv',Output)
-#        print Output
+        shutil.rmtree(self.WorkDir)
+        self.OrderedDict2CSV(self.Dir+'\ResultsEff.csv',Output)
         return None
             
 if __name__ == '__main__':
-    ins = CDO()
-#    ins.EvaluateSample(x)
-############################### Grid Study ##################################
-#    ins.GridIndependenceStudy()
-#############################################################################
+    ins = CDO()  
+    ins.MinParam = ins.CSVDataFrame2Dict('MinParam.csv')
+    ins.MaxParam = ins.CSVDataFrame2Dict('MaxParam.csv')
     
-########################## Parallel Coordinates #############################  
-#    FileName = 'Results.csv'
-#    ins.ParallelCoord(FileName)
-#############################################################################
-    
-################################## DOE ######################################     
-    N = 900
-#    ins.DOE(N)
-    lhd = pd.read_csv(ins.Dir+'/Sample.csv').values
-    lhd = lhd[423:]
-    ins.DOE(N,lhd=lhd)
-
-#############################################################################
-    
-    
-
-    
-
-    
-
-
-
+    Opt = np.loadtxt('Optimal.csv',delimiter=',')
+    ins.EvaluateSample(Opt,0)
+#    W1Eff = np.loadtxt('W1Eff.csv',delimiter=',')
+#    
+#    for num,point in enumerate(SampleEff):
+#        Sample = DRBO.InverseMap(W1Eff,point)
+#        ins.EvaluateSample(Sample,num)
+            
+#    ins.DOE(600)
